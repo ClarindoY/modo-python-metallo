@@ -17,20 +17,29 @@ import streamlit as st
 import pandas as pd
 
 import metallo_cad as mc
-from metallo_cad import exporters, drawing, laser, etiquetas, flanges, orcamento, modelos, planificacao, promobile, nesting_linear, nest_report
+from metallo_cad import exporters, drawing, laser, etiquetas, flanges, orcamento, modelos, planificacao, promobile, nesting_linear, nest_report, itubecam, puxador
 from metallo_cad import bancada, bancada_pdf, cubas as cubas_lib, bancadas_lib, saiote, paneleiro as paneleiro_mod
 from metallo_cad import ralo as ralo_lib, ralos_lib
+from metallo_cad import torre_inox
+from metallo_cad import peca_plana
 from metallo_cad.config import LOGO
 
+APP_VERSAO = "v6.1 · 14/07/2026"
 st.set_page_config(page_title="METALLO IA - Gerador de Pecas", page_icon="⚡",
                    layout="centered", initial_sidebar_state="collapsed")
 
 # --------------------------------------------------------------------- estilo (escuro metalizado)
 # ------------------------------------------------------------------ temas de interface
 TEMAS_UI = {
-    "Ciano Tech":  {"a1": "#00e5ff", "a2": "#7c4dff", "btn": "#021018"},
-    "Ambar Forja": {"a1": "#ffb300", "a2": "#ff6d3d", "btn": "#1a1204"},
-    "Aco Prata":   {"a1": "#d6e0ec", "a2": "#8aa7c9", "btn": "#10151c"},
+    "Ciano Tech":    {"a1": "#00e5ff", "a2": "#7c4dff", "btn": "#021018"},
+    "Ambar Forja":   {"a1": "#ffb300", "a2": "#ff6d3d", "btn": "#1a1204"},
+    "Aco Prata":     {"a1": "#d6e0ec", "a2": "#8aa7c9", "btn": "#10151c"},
+    "Verde Solda":   {"a1": "#39ff88", "a2": "#00c853", "btn": "#04170c"},
+    "Rubi Plasma":   {"a1": "#ff3d5a", "a2": "#ff8a3d", "btn": "#1a060a"},
+    "Azul Aço":      {"a1": "#4da3ff", "a2": "#2bd9d9", "btn": "#061223"},
+    "Roxo Neon":     {"a1": "#b26bff", "a2": "#ff4dd2", "btn": "#120621"},
+    "Dourado Laser": {"a1": "#ffd54d", "a2": "#ff9e3d", "btn": "#1c1404"},
+    "Corten":        {"a1": "#ff7a3d", "a2": "#d9a05b", "btn": "#190c04"},
 }
 
 
@@ -63,12 +72,49 @@ def _salva_tema():
         pass
 
 
+APP_BUILD = "v2026.07.14 · PDFs revisados + aba Configurações (logo/empresa + aparência)"
+
+APARENCIA_PADRAO = {"modo": "Escuro", "largura": "Normal", "densidade": "Confortável",
+                    "grade": True, "animacoes": True}
+
+
+def _aparencia_arquivo():
+    raiz = os.environ.get("DATA_DIR") or os.path.join(os.getcwd(), "dados")
+    try:
+        os.makedirs(raiz, exist_ok=True)
+    except Exception:
+        pass
+    return os.path.join(raiz, "ui_aparencia.json")
+
+
+def _aparencia_carrega():
+    import json
+    try:
+        v = json.load(open(_aparencia_arquivo(), encoding="utf-8"))
+        return {**APARENCIA_PADRAO, **v}
+    except Exception:
+        return dict(APARENCIA_PADRAO)
+
+
+def _aparencia_salva(v):
+    import json
+    try:
+        json.dump(v, open(_aparencia_arquivo(), "w", encoding="utf-8"))
+    except Exception:
+        pass
+
+
+if "ui_aparencia" not in st.session_state:
+    st.session_state["ui_aparencia"] = _aparencia_carrega()
+_AP = st.session_state["ui_aparencia"]
+
 if "ui_tema" not in st.session_state:
     st.session_state["ui_tema"] = _tema_salvo() or "Ciano Tech"
 _tsel1, _tsel2 = st.columns([4.1, 1.7])
 with _tsel2:
     _tema_nome = st.selectbox("🎨 Tema", list(TEMAS_UI.keys()), key="ui_tema",
                               on_change=_salva_tema)
+    st.caption(APP_BUILD)
 _T = TEMAS_UI.get(_tema_nome, TEMAS_UI["Ciano Tech"])
 
 _CSS = """
@@ -183,6 +229,30 @@ for _tok, _alpha in [("@A1_05@", ".05"), ("@A1_06@", ".06"), ("@A1_10@", ".10"),
     _CSS = _CSS.replace(_tok, _rgba(_T["a1"], _alpha))
 _CSS = _CSS.replace("@A2_10@", _rgba(_T["a2"], ".10"))
 _CSS = _CSS.replace("@A1@", _T["a1"]).replace("@A2@", _T["a2"]).replace("@BTN@", _T["btn"])
+# ---- aparência (além das cores): modo, largura, densidade, grade, animações
+_LARG = {"Normal": "940px", "Larga": "1200px", "Total": "98%"}[_AP.get("largura", "Normal")]
+_CSS = _CSS.replace("max-width:940px", f"max-width:{_LARG}")
+if _AP.get("densidade") == "Compacto":
+    _CSS = _CSS.replace("padding-top:1.0rem; padding-bottom:3rem;",
+                        "padding-top:0.4rem; padding-bottom:1.2rem;")
+    _CSS += "<style>div[data-testid='stVerticalBlock']{gap:0.55rem;}</style>"
+if not _AP.get("grade", True):
+    _CSS = _CSS.replace("linear-gradient(@A1_035@ 1px, transparent 1px),", "")
+    _CSS = _CSS.replace("linear-gradient(90deg, @A1_035@ 1px, transparent 1px),", "")
+    _CSS = _CSS.replace("background-size:auto,auto,44px 44px,44px 44px,auto;",
+                        "background-size:auto,auto,auto;")
+if not _AP.get("animacoes", True):
+    _CSS += "<style>.hero::before{animation:none !important; display:none;}</style>"
+if _AP.get("modo") == "Claro":
+    _CSS += """<style>
+      .stApp{ background:
+          radial-gradient(900px 480px at 15% -10%, rgba(0,0,0,.04), transparent 55%),
+          linear-gradient(180deg,#f2f5f9 0%, #e8edf4 100%) !important;
+          color:#16222f !important; }
+      :root{ --ink:#16222f; --muted:#51677e; }
+      .hero{ background:linear-gradient(135deg,#ffffffee,#eef2f7ee) !important; }
+      [data-testid="stMarkdownContainer"], label, p, span{ color:#16222f; }
+    </style>"""
 st.markdown(_CSS, unsafe_allow_html=True)
 
 
@@ -194,20 +264,26 @@ def _logo_b64():
         return ""
 
 
-def gerar_zip(r) -> bytes:
-    """Gera os arquivos de UMA peca e devolve um .zip em memoria."""
+def gerar_zip(r, formatos=("igs", "step")) -> bytes:
+    """Gera os arquivos de UMA peca e devolve um .zip em memoria.
+    formatos: quais formatos 3D incluir — ('igs',), ('step',) ou ambos."""
+    formatos = tuple(formatos)
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
         arquivos = []
         pdf = d / f"{r.name}.pdf"; drawing.draw(r, pdf); arquivos.append(pdf)
         if getattr(r, "shape", None) is not None:
-            ig = d / f"{r.name}.igs"; exporters.to_iges(r, ig); arquivos.append(ig)
-            st_ = d / f"{r.name}.step"; exporters.to_step(r, st_); arquivos.append(st_)
+            if "igs" in formatos:
+                ig = d / f"{r.name}.igs"; exporters.to_iges(r, ig); arquivos.append(ig)
+            if "step" in formatos:
+                st_ = d / f"{r.name}.step"; exporters.to_step(r, st_); arquivos.append(st_)
         if getattr(r, "outline", None):
             dxf = d / f"{r.name}.dxf"; exporters.to_dxf(r, dxf); arquivos.append(dxf)
         for nome, solido in r.parts.items():
-            a = d / f"{nome}.igs"; exporters.to_iges(solido, a); arquivos.append(a)
-            b = d / f"{nome}.step"; exporters.to_step(solido, b); arquivos.append(b)
+            if "igs" in formatos:
+                a = d / f"{nome}.igs"; exporters.to_iges(solido, a); arquivos.append(a)
+            if "step" in formatos:
+                b = d / f"{nome}.step"; exporters.to_step(solido, b); arquivos.append(b)
         try:
             png = d / f"{r.name}.png"; png.write_bytes(drawing.draw_png(r)); arquivos.append(png)
         except Exception:
@@ -437,10 +513,26 @@ def mostra_resultado(r):
         st.image(drawing.draw_png(r), caption="Preview do desenho técnico", use_container_width=True)
     except Exception:
         pass
-    st.download_button(
-        "⬇  Baixar arquivos (.zip)", data=gerar_zip(r),
-        file_name=f"{r.name}.zip", mime="application/zip", use_container_width=True,
-    )
+    tem_3d = getattr(r, "shape", None) is not None or r.parts
+    if tem_3d:
+        st.download_button(
+            "⬇  Baixar tudo (.zip — IGS + STEP)", data=gerar_zip(r),
+            file_name=f"{r.name}.zip", mime="application/zip", use_container_width=True,
+        )
+        cf1, cf2 = st.columns(2)
+        cf1.download_button(
+            "⬇  Apenas STEP (.zip)", data=gerar_zip(r, formatos=("step",)),
+            file_name=f"{r.name}_STEP.zip", mime="application/zip", use_container_width=True,
+        )
+        cf2.download_button(
+            "⬇  Apenas IGS (.zip)", data=gerar_zip(r, formatos=("igs",)),
+            file_name=f"{r.name}_IGS.zip", mime="application/zip", use_container_width=True,
+        )
+    else:
+        st.download_button(
+            "⬇  Baixar arquivos (.zip)", data=gerar_zip(r),
+            file_name=f"{r.name}.zip", mime="application/zip", use_container_width=True,
+        )
     with st.expander("🏷️  Etiqueta de identificação (opcional)"):
         sfx = r.kind
         e1, e2, e3 = st.columns(3)
@@ -480,6 +572,49 @@ def mostra_resultado(r):
                 lst = st.session_state.setdefault("nest_tubo_lista", [])
                 lst.append({"perfil": rot, "comprimento": float(Lp), "qtd": int(qn)})
                 st.success(f"Enviado: {int(qn)}× {rot} ({Lp:g} mm). Abra a aba **Nesting de tubos**.")
+
+
+def _pdf_pagina_3d(imagens):
+    """Uma pagina A3 com as vistas 3D (bytes PNG) lado a lado. Retorna bytes PDF."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+    from matplotlib.backends.backend_pdf import PdfPages
+    b = io.BytesIO()
+    with PdfPages(b) as pp:
+        fig = plt.figure(figsize=(16.54, 11.69))
+        fig.text(0.05, 0.95, "VISTAS 3D DO CONJUNTO", fontsize=13, weight="bold")
+        n = max(len(imagens), 1)
+        for k, (titulo, png) in enumerate(imagens):
+            ax = fig.add_axes([0.04 + k * (0.92 / n), 0.12, 0.92 / n - 0.03, 0.75])
+            try:
+                ax.imshow(mpimg.imread(io.BytesIO(png)))
+            except Exception:
+                pass
+            ax.axis("off"); ax.set_title(titulo, fontsize=11)
+        pp.savefig(fig); plt.close(fig)
+    return b.getvalue()
+
+
+def _merge_pdfs(pdfs):
+    """Junta varios PDFs (bytes) num so. Usa pypdf; se faltar, retorna None."""
+    try:
+        from pypdf import PdfWriter, PdfReader
+        w = PdfWriter()
+        for pb in pdfs:
+            if not pb:
+                continue
+            try:
+                r = PdfReader(io.BytesIO(pb))
+                for pg in r.pages:
+                    w.add_page(pg)
+            except Exception:
+                continue
+        out = io.BytesIO(); w.write(out)
+        return out.getvalue()
+    except Exception:
+        return None
 
 
 def nome_auto(key, sugestao):
@@ -542,6 +677,7 @@ MENU = [
     ("redondo", "⭕   Tubo redondo (1/2\" a 10\")"),
     ("torre", "⬡   Torre sextavada"),
     ("chapas", "▭   Chapas (L / hexágono)"),
+    ("pecaplana", "▱   Peça plana (formatos + furos)"),
     ("flange", "⬛   Flanges (DXF inox)"),
     ("descricao", "✍️   Peça por descrição (DXF)"),
     ("placa", "🔢   Placa numérica (número + furos)"),
@@ -554,6 +690,9 @@ MENU = [
     ("nesting", "🧩   Nesting (chapa única)"),
     ("angular", "📐   Corte angular (em lote)"),
     ("mesas", "🪑   Mesas"),
+    ("itubecam", "📏   iTubeCAM (peças p/ laser de tubo)"),
+    ("puxador", "🚪   Puxadores"),
+    ("config", "⚙️   Configurações"),
     ("bancada", "🍽️   Bancada de inox (cubas + dobra)"),
     ("corte", "⏱   Tempo de corte (laser 3000 W)"),
     ("etiqueta", "🏷️   Gerar etiqueta"),
@@ -561,7 +700,11 @@ MENU = [
 ]
 TITULOS = {
     "tubo": "Tubo com furos", "redondo": "Tubo redondo", "torre": "Torre sextavada", "chapas": "Chapas",
+    "pecaplana": "Peça plana (formatos + furos)",
     "angular": "Corte angular (em lote)", "mesas": "Mesas", "bancada": "Bancada de inox",
+    "itubecam": "iTubeCAM — peças para a laser de tubo",
+    "puxador": "Puxadores",
+    "config": "Configurações",
     "flange": "Flanges (DXF inox)", "nesting": "Nesting (chapa única)",
     "descricao": "Peça por descrição (DXF)",
     "placa": "Placa numérica",
@@ -588,7 +731,7 @@ if secao == "home":
     )
     for _key, _label in MENU:
         st.button(_label, use_container_width=True, key="nav_" + _key, on_click=ir, args=(_key,))
-    st.caption("METALLO IA · Metallo Ind. de Aços do Nordeste — gerador inteligente de peças.")
+    st.caption(f"METALLO IA {APP_VERSAO} · Metallo Ind. de Aços do Nordeste — gerador inteligente de peças.")
 
 else:
     st.button("‹  Início", type="primary", key="back", on_click=ir, args=("home",))
@@ -751,6 +894,209 @@ else:
                         mostra_resultado(r)
                 except Exception as e:
                     st.error("Erro ao gerar: " + str(e))
+
+        with st.container(border=True):
+            st.markdown("#### 🏛️ TORRE INOX METALLO — pinça de vidro")
+            st.caption("2 tubos 40×15 + peça ao meio (altura 40 mm na base). Gera o desenho técnico cotado e "
+                       "**2 IGES com os mesmos eixos**: tubo com furo passante Ø12 e tubo com sextavado p/ "
+                       "porca M6 chave 10 (compensação −0,33).")
+            ti1, ti2, ti0, ti3, ti4 = st.columns(5)
+            ti_h = ti1.number_input("Altura da torre (mm)", 100.0, 2000.0, 400.0, 10.0, key="ti_h")
+            ti_n = int(ti2.number_input("Qtd. de furos", 1, 6, 2, 1, key="ti_n"))
+            ti_base = ti0.number_input("Altura da base (mm)", 10.0, 300.0, 40.0, 5.0, key="ti_base",
+                                       help="Altura da peça do meio, medida da borda inferior do tubo.")
+            ti_b1 = ti3.number_input("Topo da base → eixo do 1º furo (mm)", 5.0, 1900.0, 100.0, 5.0, key="ti_b1",
+                                     help="Ex.: torre 300, base 40, valor 100 → eixo a 140 mm da borda do tubo.")
+            ti_e = ti4.number_input("Entre furos (mm)", 10.0, 1900.0, 200.0, 5.0, key="ti_e")
+            ti5, ti6, ti7, ti8, ti9 = st.columns(5)
+            ti_w = ti5.number_input("Parede do tubo (mm)", 0.8, 3.0, 1.2, 0.1, key="ti_w")
+            ti_r = ti9.number_input("Raio do canto do tubo (mm)", 0.0, 6.0, 1.5, 0.5, key="ti_r")
+            ti_meio = 10.0 if ti6.radio("Peça do meio", ["40×10", "40×15"], horizontal=True, key="ti_meio") == "40×10" else 15.0
+            ti_d = ti7.number_input("Ø furo passante (mm)", 4.0, 30.0, 12.0, 0.5, key="ti_d")
+            ti_comp = ti8.number_input("Compensação sextavado (mm)", -2.0, 2.0, -0.33, 0.01, key="ti_comp",
+                                       help="Somada à chave 10: corte = 10 + comp (padrão −0,33 → 9,67).")
+            if st.button("GERAR TORRE INOX", type="primary", use_container_width=True, key="ti_gerar"):
+                try:
+                    res = torre_inox.gerar(ti_h, ti_n, ti_b1, ti_e, wall=ti_w, meio=ti_meio,
+                                           d_furo=ti_d, chave=10.0, comp=ti_comp, base=ti_base, raio=ti_r)
+                    pdf_ti = torre_inox.desenho_pdf(res, nome=f"TORRE INOX METALLO {ti_h:g} mm")
+                    st.success(f"Torre gerada: {ti_n} furo(s) — eixos a {', '.join(f'{p:g}' for p in res['pos'])} mm "
+                               f"da borda do tubo (base {ti_base:g} + {ti_b1:g}"
+                               f"{' + passos' if ti_n > 1 else ''}).")
+                    try:
+                        cA, cB = st.columns(2)
+                        cA.image(drawing.draw_png(res["A"]), caption="TUBO A — passante Ø" + f"{ti_d:g}", use_container_width=True)
+                        cB.image(drawing.draw_png(res["B"]), caption="TUBO B — porca M6 ch10", use_container_width=True)
+                    except Exception:
+                        pass
+                    import tempfile, os as _os
+                    bufT = io.BytesIO()
+                    with zipfile.ZipFile(bufT, "w", zipfile.ZIP_DEFLATED) as zt:
+                        for tag, rr in (("TUBO_PASSANTE", res["A"]), ("TUBO_PORCA", res["B"])):
+                            with tempfile.TemporaryDirectory() as td:
+                                pth = _os.path.join(td, rr.name + ".igs")
+                                exporters.to_iges(rr, pth)
+                                zt.writestr(f"{rr.name}.igs", open(pth, "rb").read())
+                                pst = _os.path.join(td, rr.name + ".step")
+                                exporters.to_step(rr, pst)
+                                zt.writestr(f"{rr.name}.step", open(pst, "rb").read())
+                        zt.writestr(f"TorreInox_{ti_h:g}_DESENHO.pdf", pdf_ti)
+                    st.download_button("\u2b07  Baixar TORRE (.zip: IGES + STEP + desenho)", data=bufT.getvalue(),
+                                       file_name=f"TorreInox_{int(ti_h)}_{ti_n}furos.zip",
+                                       mime="application/zip", use_container_width=True)
+                    d1, d2, d3 = st.columns(3)
+                    d1.download_button("📄 Desenho técnico", data=pdf_ti,
+                                       file_name=f"TorreInox_{int(ti_h)}_desenho.pdf",
+                                       mime="application/pdf", use_container_width=True)
+                    d2.download_button("Completo TUBO A (.zip)", data=gerar_zip(res["A"]),
+                                       file_name=f"{res['A'].name}.zip", mime="application/zip",
+                                       use_container_width=True)
+                    d3.download_button("Completo TUBO B (.zip)", data=gerar_zip(res["B"]),
+                                       file_name=f"{res['B'].name}.zip", mime="application/zip",
+                                       use_container_width=True)
+                except ValueError as ve:
+                    st.warning(str(ve))
+                except Exception as e:
+                    st.error("Erro ao gerar a torre: " + str(e))
+
+    # ------------------------------------------------- Peca plana (formatos + furos)
+    elif secao == "pecaplana":
+        with st.container(border=True):
+            st.caption("Peça planificada a partir de **formatos padrões** ou **contorno livre por coordenadas**, "
+                       "com furos unitários ou em padrão (linha, grade, círculo de furação). "
+                       "DXF com camadas CORTE e FUROS.")
+            cf1, cf2, cf3 = st.columns([1.4, 1, 1])
+            fmt = cf1.selectbox("Formato", peca_plana.FORMATOS, key="pp_fmt")
+            espp = cf2.number_input("Espessura (mm)", 0.4, 12.0, 1.2, 0.1, key="pp_esp")
+            params = {}
+            if fmt == "Retângulo":
+                c1, c2, c3 = st.columns(3)
+                params = {"C": c1.number_input("Comprimento (mm)", 5.0, 6000.0, 300.0, 5.0, key="pp_C"),
+                          "L": c2.number_input("Largura (mm)", 5.0, 3000.0, 200.0, 5.0, key="pp_L"),
+                          "raio": c3.number_input("Raio do canto (mm)", 0.0, 200.0, 0.0, 1.0, key="pp_r")}
+            elif fmt == "Retângulo chanfrado":
+                c1, c2, c3 = st.columns(3)
+                params = {"C": c1.number_input("Comprimento (mm)", 5.0, 6000.0, 300.0, 5.0, key="pp_C"),
+                          "L": c2.number_input("Largura (mm)", 5.0, 3000.0, 200.0, 5.0, key="pp_L"),
+                          "chanfro": c3.number_input("Chanfro (mm)", 0.0, 200.0, 15.0, 1.0, key="pp_ch")}
+            elif fmt == "Disco":
+                params = {"D": st.number_input("Diâmetro (mm)", 5.0, 3000.0, 250.0, 5.0, key="pp_D")}
+            elif fmt == "Anel":
+                c1, c2 = st.columns(2)
+                params = {"D": c1.number_input("Ø externo (mm)", 5.0, 3000.0, 250.0, 5.0, key="pp_D"),
+                          "d_int": c2.number_input("Ø interno (mm)", 2.0, 2990.0, 120.0, 5.0, key="pp_di")}
+            elif fmt == "Oblongo":
+                c1, c2 = st.columns(2)
+                params = {"C": c1.number_input("Comprimento (mm)", 5.0, 6000.0, 300.0, 5.0, key="pp_C"),
+                          "L": c2.number_input("Largura (mm)", 5.0, 3000.0, 80.0, 5.0, key="pp_L")}
+            elif fmt == "L":
+                c1, c2, c3, c4 = st.columns(4)
+                params = {"C": c1.number_input("Comprimento (mm)", 5.0, 6000.0, 300.0, 5.0, key="pp_C"),
+                          "L": c2.number_input("Altura (mm)", 5.0, 3000.0, 200.0, 5.0, key="pp_L"),
+                          "perna_v": c3.number_input("Perna vertical (mm)", 2.0, 3000.0, 80.0, 5.0, key="pp_pv"),
+                          "perna_h": c4.number_input("Perna horizontal (mm)", 2.0, 3000.0, 60.0, 5.0, key="pp_ph")}
+            elif fmt == "U":
+                c1, c2, c3, c4 = st.columns(4)
+                params = {"C": c1.number_input("Comprimento (mm)", 5.0, 6000.0, 300.0, 5.0, key="pp_C"),
+                          "L": c2.number_input("Altura (mm)", 5.0, 3000.0, 200.0, 5.0, key="pp_L"),
+                          "ab_larg": c3.number_input("Abertura — largura (mm)", 2.0, 3000.0, 120.0, 5.0, key="pp_aw"),
+                          "ab_prof": c4.number_input("Abertura — profundidade (mm)", 2.0, 3000.0, 100.0, 5.0, key="pp_ah")}
+            elif fmt == "Trapézio":
+                c1, c2, c3 = st.columns(3)
+                params = {"B": c1.number_input("Base maior (mm)", 5.0, 6000.0, 300.0, 5.0, key="pp_B"),
+                          "b": c2.number_input("Base menor (mm)", 2.0, 6000.0, 180.0, 5.0, key="pp_b"),
+                          "h": c3.number_input("Altura (mm)", 2.0, 3000.0, 150.0, 5.0, key="pp_h")}
+            elif fmt == "Triângulo":
+                c1, c2 = st.columns(2)
+                params = {"base": c1.number_input("Base (mm)", 5.0, 6000.0, 300.0, 5.0, key="pp_bs"),
+                          "h": c2.number_input("Altura (mm)", 2.0, 3000.0, 200.0, 5.0, key="pp_h")}
+            elif fmt == "Polígono regular":
+                c1, c2 = st.columns(2)
+                params = {"n": int(c1.number_input("Nº de lados", 3, 24, 6, 1, key="pp_n")),
+                          "D": c2.number_input("Ø circunscrito (mm)", 5.0, 3000.0, 220.0, 5.0, key="pp_D")}
+            else:
+                params = {"coords": st.text_area("Coordenadas do contorno (mm) — 'x,y; x,y; ...' ou uma por linha",
+                                                 "0,0; 200,0; 250,80; 120,160; 0,120", key="pp_coords", height=90)}
+            st.markdown("---")
+            st.markdown("**Furos** (origem no centro da peça):")
+            ft1, ft2 = st.columns([1, 3])
+            tipo_f = ft1.selectbox("Tipo", ["redondo", "oblongo", "retangular", "linha",
+                                            "grade", "circulo_furos"], key="pp_ftipo")
+            novo_f = {"tipo": tipo_f}
+            with ft2:
+                g = st.columns(6)
+                novo_f["x"] = g[0].number_input("X", -3000.0, 3000.0, 0.0, 5.0, key="pp_fx")
+                novo_f["y"] = g[1].number_input("Y", -3000.0, 3000.0, 0.0, 5.0, key="pp_fy")
+                if tipo_f == "redondo":
+                    novo_f["d"] = g[2].number_input("Ø", 0.5, 500.0, 10.0, 0.5, key="pp_fd")
+                elif tipo_f == "oblongo":
+                    novo_f["comp"] = g[2].number_input("Comp.", 2.0, 1000.0, 40.0, 1.0, key="pp_fc")
+                    novo_f["larg"] = g[3].number_input("Larg.", 1.0, 500.0, 10.0, 0.5, key="pp_fl")
+                    novo_f["ang"] = g[4].number_input("Âng.", -180.0, 180.0, 0.0, 5.0, key="pp_fa")
+                elif tipo_f == "retangular":
+                    novo_f["c"] = g[2].number_input("Comp.", 2.0, 1000.0, 40.0, 1.0, key="pp_fc")
+                    novo_f["l"] = g[3].number_input("Larg.", 1.0, 500.0, 20.0, 0.5, key="pp_fl")
+                    novo_f["ang"] = g[4].number_input("Âng.", -180.0, 180.0, 0.0, 5.0, key="pp_fa")
+                elif tipo_f == "linha":
+                    novo_f["n"] = int(g[2].number_input("Qtd", 1, 200, 4, 1, key="pp_fn"))
+                    novo_f["passo"] = g[3].number_input("Passo", 1.0, 1000.0, 40.0, 1.0, key="pp_fp")
+                    novo_f["ang"] = g[4].number_input("Âng.", -180.0, 180.0, 0.0, 5.0, key="pp_fa")
+                    novo_f["d"] = g[5].number_input("Ø", 0.5, 500.0, 8.0, 0.5, key="pp_fd")
+                elif tipo_f == "grade":
+                    novo_f["nx"] = int(g[2].number_input("Nx", 1, 100, 3, 1, key="pp_fnx"))
+                    novo_f["ny"] = int(g[3].number_input("Ny", 1, 100, 2, 1, key="pp_fny"))
+                    novo_f["px"] = g[4].number_input("Passo X", 1.0, 1000.0, 40.0, 1.0, key="pp_fpx")
+                    novo_f["py"] = g[5].number_input("Passo Y", 1.0, 1000.0, 40.0, 1.0, key="pp_fpy")
+                    novo_f["d"] = st.number_input("Ø do furo", 0.5, 500.0, 8.0, 0.5, key="pp_fd")
+                else:
+                    novo_f["n"] = int(g[2].number_input("Qtd", 1, 100, 6, 1, key="pp_fn"))
+                    novo_f["Dc"] = g[3].number_input("Ø círculo", 2.0, 3000.0, 150.0, 5.0, key="pp_fDc")
+                    novo_f["d"] = g[4].number_input("Ø furo", 0.5, 500.0, 9.0, 0.5, key="pp_fd")
+                    novo_f["ang0"] = g[5].number_input("Âng. inicial", -180.0, 180.0, 0.0, 5.0, key="pp_fa0")
+            ab1, ab2 = st.columns([1, 1])
+            st.session_state.setdefault("pp_furos", [])
+            if ab1.button("➕ Adicionar furo", key="pp_add", use_container_width=True):
+                st.session_state["pp_furos"].append(dict(novo_f))
+            if ab2.button("🗑 Limpar todos", key="pp_clr", use_container_width=True):
+                st.session_state["pp_furos"] = []
+            for k, f in enumerate(list(st.session_state["pp_furos"])):
+                lc1, lc2 = st.columns([5, 1])
+                lc1.markdown(f"• {peca_plana.descreve_furo(f)}")
+                if lc2.button("remover", key=f"pp_rm{k}"):
+                    st.session_state["pp_furos"].pop(k)
+                    st.rerun()
+            st.markdown("---")
+            nome_auto("pp_nome", f"Peca_{fmt.split(' ')[0]}")
+            nomep = st.text_input("Nome da peça", key="pp_nome")
+            try:
+                prims = peca_plana.montar(fmt, params, st.session_state["pp_furos"], esp=espp, nome=nomep)
+                inf = prims["info"]
+                for av in inf["avisos"]:
+                    st.warning("Atenção: " + av)
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Dimensões", f"{prims['bbox'][0]:.0f} × {prims['bbox'][1]:.0f} mm")
+                m2.metric("Furos", inf["n_furos"])
+                m3.metric("Área líquida", f"{inf['area_liq'] / 1e4:.2f} dm²")
+                m4.metric("Peso (inox)", f"{inf['peso']:.2f} kg")
+                cV, cD = st.columns([1.2, 1])
+                cV.image(flanges.preview_png(prims), use_container_width=True)
+                with cD:
+                    dxfp = flanges.dxf_bytes([(prims, 0, 0)])
+                    st.download_button("⬇ DXF (CORTE + FUROS)", data=dxfp, file_name=f"{nomep}.dxf",
+                                       mime="image/vnd.dxf", use_container_width=True, key="pp_dxf")
+                    st.download_button("📄 Folha PDF", data=flanges.preview_pdf(prims, esp=espp,
+                                       obs=f"{nomep} · {fmt} · {inf['n_furos']} furo(s)"),
+                                       file_name=f"{nomep}_folha.pdf", mime="application/pdf",
+                                       use_container_width=True, key="pp_pdf")
+                    st.download_button("🏷 Etiqueta", data=etiquetas.gerar_etiquetas_pdf(
+                                       [{"descricao": f"{nomep} {prims['bbox'][0]:.0f}x{prims['bbox'][1]:.0f}",
+                                         "material": f"Inox 304 {espp:g}mm", "qtd": 1}], tamanho=(150.0, 50.0)),
+                                       file_name=f"{nomep}_etiqueta.pdf", mime="application/pdf",
+                                       use_container_width=True, key="pp_etq")
+            except ValueError as ve:
+                st.warning(str(ve))
+            except Exception as e:
+                st.error("Erro ao gerar a peça: " + str(e))
 
     # ------------------------------------------------- Chapas (L / hexagono)
     elif secao == "chapas":
@@ -1052,34 +1398,16 @@ else:
                         for i in range(n_cubas):
                             eixos.append(cols[i % len(cols)].number_input(f"Eixo {i + 1} (mm)", 0.0, 6000.0, 300.0 * (i + 1), 10.0, key=f"bc_eixo{i}"))
 
-            inc_saiote = st.checkbox("Incluir saiote (rodapé interno)", False, key="bc_saiote",
-                                     help="4 peças com seção 170 mm (10/15/120/15/10), calculadas das medidas "
-                                          "da bancada (PL = C − 30 · PT = L − 30). O quadro montado fica "
-                                          "~2,5 cm menor, instalado por dentro das dobras da bancada.")
-
-            st.markdown("**Reforços e prateleiras avulsos** (peças soltas, cortadas junto — não fazem "
-                       "parte da chapa da bancada):")
-            rc1, rc2 = st.columns(2)
-            n_reforcos = int(rc1.number_input(
-                "Quantidade de reforços de bancada (0 = nenhum)", 0, 20, 0, 1, key="bc_nref",
-                help="Reforço avulso (mesma peça do Paneleiro): CR = profundidade − 152 mm, alma 150 mm, "
-                     "dobra dupla 15+10 nas bordas longitudinais, abas de 15 mm nas pontas sem linha de dobra."))
-            n_prateleiras = int(rc2.number_input(
-                "Quantidade de prateleiras (0 = nenhuma)", 0, 20, 0, 1, key="bc_npra",
-                help="Prateleira lisa avulsa: chapa retangular com aba nas 4 bordas e esquadria nos cantos "
-                     "— mesmo motor da bancada 'lisa' (sem espelho)."))
-            comp_prat = max(comp - 100.0, 100.0); prof_prat = max(prof - 100.0, 100.0); aba_prat = 20.0
-            if n_prateleiras > 0:
-                with st.expander("Medidas da prateleira"):
-                    pp1, pp2, pp3 = st.columns(3)
-                    comp_prat = pp1.number_input("Comprimento da prateleira (mm)", 100.0, 6000.0,
-                                                 comp_prat, 10.0, key="bc_pratC")
-                    prof_prat = pp2.number_input("Profundidade da prateleira (mm)", 100.0, 1500.0,
-                                                 prof_prat, 10.0, key="bc_pratP")
-                    aba_prat = pp3.number_input("Aba da prateleira (mm)", 10.0, 200.0, aba_prat, 5.0, key="bc_pratAba")
-                    st.caption("Padrão sugerido: comprimento/profundidade da bancada − 100 mm (folga p/ encaixar "
-                               "na estrutura) e aba de 20 mm — **é um valor de partida, confirme a medida real "
-                               "usada na sua fábrica e ajuste se precisar.**")
+            st.markdown("**Acessórios (gerados junto, na mesma peça):**")
+            _ac1, _ac2, _ac3, _ac4 = st.columns(4)
+            inc_saiote = _ac1.radio("Saiote", ["Não", "Sim"], horizontal=False, key="bc_saiote") == "Sim"
+            q_ref_sup = int(_ac2.number_input("Reforço superior", 0, 10, 0, 1, key="bc_qrefsup",
+                                              help="Reforço da bandeja superior: CR = L − 152, alma 150, "
+                                                   "dobras 15+10 nas bordas, abas 15 nas pontas (sem linha de dobra)."))
+            q_paneleiro = int(_ac3.number_input("Paneleiro", 1, 3, 1, 1, key="bc_qpan",
+                                                help="Paneleiro: alma C−100 × L−140, abas 40+10 nas 4 laterais."))
+            q_ref_pan = int(_ac4.number_input("Reforço paneleiro", 0, 5, 0, 1, key="bc_qrefpan",
+                                              help="Reforço do paneleiro: L−143 × alma 150, abas 35+10 em cima/baixo."))
             _cod_esp = {"Espelho Frontal (fundo)": "F", "Frontal + Lateral Esquerda": "FE",
                         "Frontal + Lateral Direita": "FD", "Frontal + Laterais Esq. e Dir.": "U",
                         "Sem espelho (lisa)": "LISA"}.get(opc, "F")
@@ -1121,20 +1449,19 @@ else:
                             etiq_sai = etiquetas.gerar_etiquetas_pdf(saiote.etiqueta_itens(rs_sai), tamanho=(150.0, 50.0))
                         except ValueError as _ve:
                             st.warning("Saiote não gerado: " + str(_ve))
-                    rs_ref = None; dxf_ref = None
-                    if n_reforcos > 0:
-                        try:
-                            rs_ref = paneleiro_mod.reforco_bancada_prims(prof, esp=esp)
-                            dxf_ref = bancada.nest_dxf([(rs_ref, n_reforcos)], gap=30)
-                        except ValueError as _ve:
-                            st.warning("Reforço não gerado: " + str(_ve))
-                    rs_prat = None; dxf_prat = None
-                    if n_prateleiras > 0:
-                        try:
-                            rs_prat = bancada.prateleira_prims(comp_prat, prof_prat, esp=esp, aba=aba_prat)
-                            dxf_prat = bancada.nest_dxf([(rs_prat, n_prateleiras)], gap=30)
-                        except ValueError as _ve:
-                            st.warning("Prateleira não gerada: " + str(_ve))
+                    # acessórios com quantidade (mesma página) — subpasta, prims, qtd
+                    acess = []
+                    try:
+                        if q_ref_sup > 0:
+                            acess.append(("reforco_superior",
+                                          paneleiro_mod.reforco_bancada_prims(prof, esp=esp), q_ref_sup))
+                        acess.append(("paneleiro",
+                                      paneleiro_mod.paneleiro_prims(comp, prof, esp=esp), q_paneleiro))
+                        if q_ref_pan > 0:
+                            acess.append(("reforco_paneleiro",
+                                          paneleiro_mod.reforco_paneleiro_prims(prof, esp=esp), q_ref_pan))
+                    except ValueError as _ve2:
+                        st.warning("Acessório não gerado (bancada pequena demais): " + str(_ve2))
                     cP, cI = st.columns([1.5, 1])
                     with cP:
                         _abas = ["\U0001F4D0 Planificação (corte)", "\U0001F9CA 3D (dobrado)"]
@@ -1166,19 +1493,9 @@ else:
                             st.caption(f"**Saiote incluído:** PL {rs_sai['PL']:.0f} mm ×2 · PT {rs_sai['PT']:.0f} mm ×2 · "
                                        f"seção 170 mm — quadro ~2,5 cm menor, por dentro das dobras. "
                                        f"Arquivos na pasta **saiote/** do zip.")
-                        if rs_ref is not None:
-                            st.metric(f"Reforço(s) avulso(s) × {n_reforcos}",
-                                     f"{rs_ref['bbox'][0]:.0f} × {rs_ref['bbox'][1]:.0f} mm")
-                            st.caption(f"CR = {rs_ref['info']['CR']:.0f} mm (profundidade − 152) · alma 150 mm · "
-                                       f"peso unit. ~{bancada.peso_kg(rs_ref):.2f} kg · total ~"
-                                       f"{bancada.peso_kg(rs_ref) * n_reforcos:.2f} kg. Arquivos na pasta "
-                                       f"**reforcos/** do zip.")
-                        if rs_prat is not None:
-                            st.metric(f"Prateleira(s) × {n_prateleiras}",
-                                     f"{rs_prat['bbox'][0]:.0f} × {rs_prat['bbox'][1]:.0f} mm")
-                            st.caption(f"Aba {aba_prat:.0f} mm · peso unit. ~{bancada.peso_kg(rs_prat):.2f} kg · "
-                                       f"total ~{bancada.peso_kg(rs_prat) * n_prateleiras:.2f} kg. Arquivos na "
-                                       f"pasta **prateleiras/** do zip.")
+                        if acess:
+                            _res = " · ".join(f"{sub.replace('_', ' ')} ×{q}" for sub, _pr, q in acess)
+                            st.caption(f"**Acessórios:** {_res}. Cada um na sua pasta no zip (DXF em lote + desenho).")
                         buf = io.BytesIO()
                         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
                             z.writestr(f"{nome}/{nome}.dxf", dxf)
@@ -1188,6 +1505,11 @@ else:
                             z.writestr(f"{nome}/{nome}_3D.png", img3d)
                             z.writestr(f"{nome}/{nome}_corte.pdf", pdf_corte)
                             z.writestr(f"{nome}/{nome}_dobra.pdf", pdf_dobra)
+                            for sub, pr, q in acess:
+                                z.writestr(f"{nome}/{sub}/{sub}_x{q}.dxf", bancada.nest_dxf([(pr, q)], gap=30))
+                                z.writestr(f"{nome}/{sub}/{sub}_unidade.dxf", bancada.dxf_bytes([(pr, 0, 0)]))
+                                z.writestr(f"{nome}/{sub}/{sub}_desenho.pdf",
+                                           paneleiro_mod.desenho_pdf([pr], titulo=f"{pr['name']} (x{q})"))
                             if rs_sai is not None:
                                 z.writestr(f"{nome}/saiote/{nome}_saiote_conjunto.dxf", dxf_sai)
                                 for p in rs_sai["pecas"]:
@@ -1196,18 +1518,49 @@ else:
                                 z.writestr(f"{nome}/saiote/{nome}_saiote_FOLHA.pdf", folha_sai)
                                 z.writestr(f"{nome}/saiote/{nome}_saiote_etiquetas.pdf", etiq_sai)
                                 z.writestr(f"{nome}/saiote/{nome}_saiote_3D.png", img3d_sai)
-                            if rs_ref is not None:
-                                z.writestr(f"{nome}/reforcos/{nome}_reforcos_x{n_reforcos}.dxf", dxf_ref)
-                                z.writestr(f"{nome}/reforcos/{nome}_reforco_unitario.dxf",
-                                          bancada.dxf_bytes([(rs_ref, 0, 0)]))
-                            if rs_prat is not None:
-                                z.writestr(f"{nome}/prateleiras/{nome}_prateleiras_x{n_prateleiras}.dxf", dxf_prat)
-                                z.writestr(f"{nome}/prateleiras/{nome}_prateleira_unitaria.dxf",
-                                          bancada.dxf_bytes([(rs_prat, 0, 0)]))
-                                z.writestr(f"{nome}/prateleiras/{nome}_prateleira_3D.png",
-                                          bancada.imagem_3d(rs_prat))
+                            # ---------- RESUMO ----------
+                            resumo_dxfs = [(f"bancada_{nome}.dxf", dxf)]
+                            if rs_sai is not None:
+                                resumo_dxfs.append(("saiote_conjunto.dxf", dxf_sai))
+                            for sub, pr, q in acess:
+                                resumo_dxfs.append((f"{sub}_x{q}.dxf", bancada.nest_dxf([(pr, q)], gap=30)))
+                            itens_ger = bancada_pdf.etiqueta_itens(prims, 1)
+                            if rs_sai is not None:
+                                itens_ger += saiote.etiqueta_itens(rs_sai)
+                            for sub, pr, q in acess:
+                                itens_ger.append({"descricao": f"{pr['name']} {pr['bbox'][0]:.0f}x{pr['bbox'][1]:.0f} mm",
+                                                  "material": f"Inox 304 {esp:g}mm", "qtd": q})
+                            etiq_gerais = etiquetas.gerar_etiquetas_pdf(itens_ger, tamanho=(150.0, 50.0))
+                            imgs3d = [("Bancada", img3d)]
+                            if img3d_sai:
+                                imgs3d.append(("Saiote", img3d_sai))
+                            pdfs_proj = [_pdf_pagina_3d(imgs3d), folha, pdf_dobra]
+                            if rs_sai is not None:
+                                pdfs_proj.append(folha_sai)
+                            for sub, pr, q in acess:
+                                pdfs_proj.append(paneleiro_mod.desenho_pdf([pr], titulo=f"{pr['name']} (x{q})"))
+                            resumo_proj = _merge_pdfs(pdfs_proj)
+                            for fn, db in resumo_dxfs:
+                                z.writestr(f"{nome}/RESUMO_DXF/{fn}", db)
+                            z.writestr(f"{nome}/RESUMO_DXF/ETIQUETAS_GERAIS.pdf", etiq_gerais)
+                            if resumo_proj:
+                                z.writestr(f"{nome}/RESUMO_PROJETO.pdf", resumo_proj)
+                            else:
+                                for kk, pb in enumerate(pdfs_proj):
+                                    if pb:
+                                        z.writestr(f"{nome}/RESUMO_PROJETO/parte_{kk+1}.pdf", pb)
                         st.download_button("\u2b07  Baixar (.zip: DXF + folha + etiqueta + PDFs + PNG)", data=buf.getvalue(),
                                            file_name=f"{nome}.zip", mime="application/zip", use_container_width=True)
+                        buf_res = io.BytesIO()
+                        with zipfile.ZipFile(buf_res, "w", zipfile.ZIP_DEFLATED) as zr:
+                            for fn, db in resumo_dxfs:
+                                zr.writestr(f"RESUMO_DXF/{fn}", db)
+                            zr.writestr("RESUMO_DXF/ETIQUETAS_GERAIS.pdf", etiq_gerais)
+                            if resumo_proj:
+                                zr.writestr("RESUMO_PROJETO.pdf", resumo_proj)
+                        st.download_button("\U0001F4C1  RESUMO: todos os DXF numa pasta + etiquetas gerais + projeto",
+                                           data=buf_res.getvalue(), file_name=f"{nome}_RESUMO.zip",
+                                           mime="application/zip", use_container_width=True)
                         if rs_sai is not None:
                             buf_sai = io.BytesIO()
                             with zipfile.ZipFile(buf_sai, "w", zipfile.ZIP_DEFLATED) as zs:
@@ -1264,7 +1617,9 @@ else:
                         if eb2.button("📥 Salvar na biblioteca", key="bc_envlib", use_container_width=True):
                             params = {"comprimento": comp, "profundidade": prof, "esp": esp,
                                       "espelhos": list(espelhos), "espelho_altura": espalt, "aba": abav,
-                                      "dobra_fora": dobra_fora, "cubas": [list(c) for c in cubas]}
+                                      "dobra_fora": dobra_fora, "cubas": [list(c) for c in cubas],
+                                      "saiote": bool(inc_saiote), "ref_sup": int(q_ref_sup),
+                                      "paneleiro": int(q_paneleiro), "ref_pan": int(q_ref_pan)}
                             bancadas_lib.salvar_bancada(nome, params, qtd_lib)
                             st.success(f"'{nome}' (×{qtd_lib}) salva. Veja na aba 📚 Minhas bancadas.")
             except Exception as e:
@@ -1292,6 +1647,50 @@ else:
                     lote_dxf = bancada.nest_dxf([(pr, int(m.get("qtd", 1))) for m, pr in validas])
                     lc1.download_button("⬇ DXF em lote (1 arquivo)", data=lote_dxf,
                                         file_name="bancadas_lote.dxf", mime="image/vnd.dxf", use_container_width=True)
+                    # RESUMO DXF de TODAS: cada DXF (bancada + conjunto) numa pasta só + etiquetas gerais
+                    buf_rall = io.BytesIO()
+                    itens_ger_lib = []
+                    with zipfile.ZipFile(buf_rall, "w", zipfile.ZIP_DEFLATED) as zr:
+                        for m, pr in validas:
+                            qb = int(m.get("qtd", 1)); pz = m.get("params", {}) or {}
+                            nm = m["nome"]
+                            zr.writestr(f"RESUMO_DXF/bancada_{nm}_x{qb}.dxf", bancada.nest_dxf([(pr, qb)], gap=40))
+                            itens_ger_lib += bancada_pdf.etiqueta_itens(pr, qb)
+                            zr.writestr(f"ADESIVOS/etiquetas_{nm}_x{qb}.pdf",
+                                        etiquetas.gerar_etiquetas_pdf(
+                                            bancada_pdf.etiqueta_itens(pr, qb),
+                                            tamanho=(150.0, 50.0)))
+                            try:
+                                if pz.get("saiote"):
+                                    rs = saiote.gerar(pz.get("comprimento", 1000), pz.get("profundidade", 500),
+                                                      esp=pz.get("esp", 1.2))
+                                    pcs = [(p, qb) for p in rs["pecas"]]
+                                    zr.writestr(f"RESUMO_DXF/saiote_{nm}_x{qb}.dxf", bancada.nest_dxf(pcs, gap=30))
+                                    for _it in saiote.etiqueta_itens(rs):
+                                        _it = dict(_it); _it["qtd"] = qb
+                                        itens_ger_lib.append(_it)
+                                _ac = [("reforco_superior", pz.get("ref_sup", 0),
+                                        lambda: paneleiro_mod.reforco_bancada_prims(pz.get("profundidade", 500), esp=pz.get("esp", 1.2))),
+                                       ("paneleiro", pz.get("paneleiro", 0),
+                                        lambda: paneleiro_mod.paneleiro_prims(pz.get("comprimento", 1000), pz.get("profundidade", 500), esp=pz.get("esp", 1.2))),
+                                       ("reforco_paneleiro", pz.get("ref_pan", 0),
+                                        lambda: paneleiro_mod.reforco_paneleiro_prims(pz.get("profundidade", 500), esp=pz.get("esp", 1.2)))]
+                                for _sub, _q, _fn in _ac:
+                                    _qt = int(_q or 0) * qb
+                                    if _qt > 0:
+                                        _pr2 = _fn()
+                                        zr.writestr(f"RESUMO_DXF/{_sub}_{nm}_x{_qt}.dxf",
+                                                    bancada.nest_dxf([(_pr2, _qt)], gap=30))
+                                        itens_ger_lib.append({"descricao": f"{_pr2['name']} {_pr2['bbox'][0]:.0f}x{_pr2['bbox'][1]:.0f} mm ({nm})",
+                                                              "material": f"Inox 304 {pz.get('esp', 1.2):g}mm", "qtd": _qt})
+                            except Exception:
+                                pass
+                        if itens_ger_lib:
+                            zr.writestr("RESUMO_DXF/ETIQUETAS_GERAIS.pdf",
+                                        etiquetas.gerar_etiquetas_pdf(itens_ger_lib, tamanho=(150.0, 50.0)))
+                    lc1.download_button("\U0001F4C1 RESUMO DXF de todas (pasta única + etiquetas)",
+                                        data=buf_rall.getvalue(), file_name="bancadas_RESUMO_DXF.zip",
+                                        mime="application/zip", use_container_width=True, key="bc_resall")
                     itens = []
                     for m, pr in validas:
                         itens += bancada_pdf.etiqueta_itens(pr, int(m.get("qtd", 1)))
@@ -1314,6 +1713,29 @@ else:
                     if st.session_state.get("bc_pack_all"):
                         st.download_button("⬇ Baixar pacote completo (.zip)", data=st.session_state["bc_pack_all"],
                                            file_name="bancadas_TUDO.zip", mime="application/zip", use_container_width=True)
+                    if st.button("🖨️ Preparar PDF ÚNICO p/ impressão (todos os projetos)",
+                                 key="bc_print_all", use_container_width=True):
+                        pdfs_all = []
+                        for m, pr in validas:
+                            q = int(m.get("qtd", 1))
+                            try:
+                                i3 = bancada.imagem_3d(pr)
+                            except Exception:
+                                i3 = None
+                            try:
+                                pdfs_all.append(bancada_pdf.folha_projeto(pr, img3d_bytes=i3, qtd=q))
+                                pdfs_all.append(bancada_pdf.dobra_pdf(pr))
+                            except Exception as _ex:
+                                st.warning(f"{m['nome']}: {_ex}")
+                        unico = _merge_pdfs([p for p in pdfs_all if p])
+                        if unico:
+                            st.session_state["bc_print_pdf"] = unico
+                        else:
+                            st.error("Não foi possível montar o PDF único.")
+                    if st.session_state.get("bc_print_pdf"):
+                        st.download_button("⬇ Baixar PDF único de impressão", data=st.session_state["bc_print_pdf"],
+                                           file_name="bancadas_PROJETOS_IMPRESSAO.pdf",
+                                           mime="application/pdf", use_container_width=True)
 
                 st.markdown("---")
                 for m, pr in pecas:
@@ -1384,11 +1806,33 @@ else:
 
     # ------------------------------------------------- Mesas
     elif secao == "mesas":
-        st.caption("Escolha o modelo de base, um modelo pronto ou ajuste as medidas.")
-        base = st.radio("Modelo de base",
-                        ["Estrutura metalon (4 pernas)", "Pés laterais em C (cantilever)"],
-                        horizontal=True, key="mesa_base")
-        if base.startswith("Estrutura"):
+        st.caption("Escolha o modelo de base pela foto de referência, um modelo pronto ou ajuste as medidas.")
+        MODELOS_MESA = {
+            "Estrutura metalon (4 pernas)": (
+                "metalon", "Quadro completo em metalon: 4 pernas + travessas em meia esquadria 45°."),
+            "Estrutura completa (moldura + pés U)": (
+                "estrutura", "Moldura superior perimetral + pés em quadro fechado + travessa central. "
+                             "Base p/ tampo de vidro, madeira ou pedra."),
+            "Pés laterais em C (cantilever)": (
+                "pes_c", "Par de pés em 'C' com diagonal frontal. Visual leve, tampo à parte."),
+            "Pé de quadro (par ou avulso)": (
+                "quadro", "Molduras retangulares fechadas (estilo trestle), com travessa, "
+                          "niveladores e opção de quadro avulso."),
+            "Pé trapézio (par)": (
+                "trapezio", "Quadro trapezoidal simétrico: topo na largura do tampo, base menor."),
+            "Base em X (cruzeta)": (
+                "base_x", "Dois quadros cruzados a 90° com meia-madeira central. Ideal p/ tampo redondo."),
+            "Pé cubo (diagonais)": (
+                "cubo", "Quadros cruzados nas diagonais do tampo quadrado, com moldura superior."),
+        }
+        cSel, cImg = st.columns([3, 2])
+        base = cSel.radio("Modelo de base", list(MODELOS_MESA.keys()), key="mesa_base")
+        _slug, _desc = MODELOS_MESA[base]
+        _img = mc.config.ASSETS / "mesas" / f"{_slug}.png"
+        if _img.exists():
+            cImg.image(str(_img), caption=base, use_container_width=True)
+        cSel.caption(_desc)
+        if base.startswith("Estrutura metalon"):
             PRESETS = {
                 "Mesa de jantar — 1600×800×750": (1600.0, 800.0, 750.0, 40),
                 "Mesa de centro — 1000×500×450": (1000.0, 500.0, 450.0, 30),
@@ -1414,7 +1858,7 @@ else:
                 H = c3.number_input("Altura (mm)", 300.0, 1200.0, step=10.0, key="mH")
                 c4, c5, c6 = st.columns(3)
                 perfil = c4.selectbox("Perfil metalon (mm)", [20, 30, 40, 50], key="mPerfil")
-                wall = c5.number_input("Parede (mm)", 0.8, 3.0, step=0.1, key="mWall")
+                wall = c5.number_input("Espessura do tubo (mm)", 0.8, 3.0, step=0.1, key="mWall", help="Parede do metalon — entra no cálculo de massa e no sólido 3D.")
                 raio = c6.number_input("Raio do canto (mm)", 0.0, 15.0, step=0.5, key="mRaio",
                                        help="0 = canto vivo. Aplica nos tubos individuais do metalon.")
                 if st.button("GERAR MESA", type="primary", use_container_width=True, key="mGen"):
@@ -1425,7 +1869,7 @@ else:
                                 "(perna, travessa de ponta, travessa longa) para o laser de tubo.")
                     except Exception as e:
                         st.error("Erro ao gerar: " + str(e))
-        else:
+        elif base.startswith("Pés laterais"):
             PRESETS_C = {
                 "Escrivaninha — 1200×750×780": (1200.0, 750.0, 780.0, 30),
                 "Escrivaninha compacta — 1000×600×750": (1000.0, 600.0, 750.0, 30),
@@ -1450,16 +1894,18 @@ else:
                 H = c3.number_input("Altura (mm)", 350.0, 1100.0, step=10.0, key="cH")
                 c4, c5, c6 = st.columns(3)
                 perfil = c4.selectbox("Perfil do tubo (mm)", [20, 25, 30, 40, 50], key="cPerfil")
-                wall = c5.number_input("Parede (mm)", 0.8, 3.0, step=0.1, key="cWall")
+                wall = c5.number_input("Espessura do tubo (mm)", 0.8, 3.0, step=0.1, key="cWall", help="Parede do metalon — entra no cálculo de massa e no sólido 3D.")
                 top_th = c6.number_input("Espessura do tampo (mm)", 6.0, 60.0, step=1.0, key="cTop")
                 c7, c8 = st.columns(2)
                 espelhado = c7.checkbox("Pés espelhados", value=False, key="cEsp",
                                         help="Marque para os dois pés inclinarem em sentidos opostos.")
                 com_rail = c8.checkbox("Travessa superior", value=True, key="cRail",
                                        help="Barra ligando os dois pés por baixo do tampo.")
+                raio = st.number_input("Raio do canto (mm)", 0.0, 15.0, 0.0, 0.5, key="cRaio",
+                                       help="0 = canto vivo. Entra na massa e fica registrado no nome/desenho.")
                 if st.button("GERAR MESA", type="primary", use_container_width=True, key="cGen"):
                     try:
-                        r = mc.mesa_pes_c(W, Dp, H, perfil=float(perfil), wall=wall, top_th=top_th,
+                        r = mc.mesa_pes_c(W, Dp, H, perfil=float(perfil), wall=wall, top_th=top_th, raio=raio,
                                           espelhado=espelhado, com_rail=com_rail)
                         mostra_resultado(r)
                         e = r.extra
@@ -1469,6 +1915,456 @@ else:
                                 "planta e lista de corte. O tampo entra como peça à parte (madeira/MDF ou chapa).")
                     except Exception as e:
                         st.error("Erro ao gerar: " + str(e))
+
+        elif base.startswith("Pé de quadro"):
+            PRESETS_Q = {
+                "Escrivaninha — 1200×600×750": (1200.0, 600.0, 750.0, 30),
+                "Mesa de jantar — 1600×800×750": (1600.0, 800.0, 750.0, 40),
+                "Aparador — 1200×400×900": (1200.0, 400.0, 900.0, 30),
+                "Bancada alta — 1400×600×1050": (1400.0, 600.0, 1050.0, 40),
+                "Personalizado": None,
+            }
+            for _k, _v in {"qW": 1200.0, "qDp": 600.0, "qH": 750.0, "qPerfil": 30,
+                           "qWall": 1.5, "qTop": 25.0}.items():
+                st.session_state.setdefault(_k, _v)
+            with st.container(border=True):
+                modelo = st.selectbox("Modelo de mesa", list(PRESETS_Q.keys()), key="mesa_modelo_q")
+                pre = PRESETS_Q[modelo]
+                if pre and st.session_state.get("_mesa_last_q") != modelo:
+                    (st.session_state["qW"], st.session_state["qDp"],
+                     st.session_state["qH"], st.session_state["qPerfil"]) = (
+                        float(pre[0]), float(pre[1]), float(pre[2]), pre[3])
+                st.session_state["_mesa_last_q"] = modelo
+                st.divider()
+                c1, c2, c3 = st.columns(3)
+                W = c1.number_input("Largura (mm)", 400.0, 4000.0, step=10.0, key="qW")
+                Dp = c2.number_input("Profundidade (mm)", 250.0, 1200.0, step=10.0, key="qDp")
+                H = c3.number_input("Altura (mm)", 350.0, 1200.0, step=10.0, key="qH")
+                c4, c5, c6 = st.columns(3)
+                perfil = c4.selectbox("Perfil do tubo (mm)", [20, 25, 30, 40, 50], key="qPerfil")
+                wall = c5.number_input("Espessura do tubo (mm)", 0.8, 3.0, step=0.1, key="qWall", help="Parede do metalon — entra no cálculo de massa e no sólido 3D.")
+                top_th = c6.number_input("Espessura do tampo (mm)", 6.0, 60.0, step=1.0, key="qTop")
+                c7, c8, c9 = st.columns(3)
+                com_rail = c7.checkbox("Travessa superior", value=True, key="qRail",
+                                       help="Barra ligando os dois quadros por baixo do tampo.")
+                recuo = c8.number_input("Recuo frente/fundo (mm)", 0.0, 200.0, 0.0, 5.0, key="qRec",
+                                        help="0 = quadro alinhado com o tampo. Valores maiores "
+                                             "recuam o pé em relação à borda.")
+                niv = c9.checkbox("Niveladores", value=False, key="qNiv",
+                                  help="Pés reguláveis sob o quadro, como na referência.")
+                avulso = st.checkbox("Gerar quadro AVULSO (1 unidade, sem tampo)", value=False,
+                                     key="qAvulso",
+                                     help="Gera um único quadro para venda/uso avulso. "
+                                          "Largura e travessa são ignoradas.")
+                raio = st.number_input("Raio do canto (mm)", 0.0, 15.0, 0.0, 0.5, key="qRaio",
+                                       help="0 = canto vivo. Entra na massa e fica registrado no nome/desenho.")
+                if st.button("GERAR MESA", type="primary", use_container_width=True, key="qGen"):
+                    try:
+                        r = mc.mesa_pe_quadro(W, Dp, H, perfil=float(perfil), wall=wall, raio=raio,
+                                              top_th=top_th, com_rail=com_rail, recuo_frente=recuo,
+                                              niveladores=niv, par=not avulso)
+                        mostra_resultado(r)
+                        e = r.extra
+                        st.caption(f"Quadro: {e['F']:g} × {e['Hq']:g} mm, soldado em meia "
+                                   f"esquadria 45° nos 4 cantos."
+                                   + (f" Niveladores h {e['niv_h']:g} mm." if niv else ""))
+                        st.info("O .zip inclui o conjunto (IGES/STEP) + o desenho com a vista do "
+                                "quadro, planta e lista de corte. Tampo à parte.")
+                    except Exception as e:
+                        st.error("Erro ao gerar: " + str(e))
+
+        elif base.startswith("Estrutura completa"):
+            PRESETS_E = {
+                "Mesa de jantar — 1500×800×740": (1500.0, 800.0, 740.0, 40),
+                "Mesa de centro — 1000×600×420": (1000.0, 600.0, 420.0, 30),
+                "Escrivaninha — 1200×600×740": (1200.0, 600.0, 740.0, 30),
+                "Aparador — 1300×400×850": (1300.0, 400.0, 850.0, 30),
+                "Personalizado": None,
+            }
+            for _k, _v in {"eL": 1500.0, "eDp": 800.0, "eH": 740.0, "ePerfil": 40,
+                           "eWall": 1.5}.items():
+                st.session_state.setdefault(_k, _v)
+            with st.container(border=True):
+                modelo = st.selectbox("Modelo de estrutura", list(PRESETS_E.keys()), key="mesa_modelo_e")
+                pre = PRESETS_E[modelo]
+                if pre and st.session_state.get("_mesa_last_e") != modelo:
+                    (st.session_state["eL"], st.session_state["eDp"],
+                     st.session_state["eH"], st.session_state["ePerfil"]) = (
+                        float(pre[0]), float(pre[1]), float(pre[2]), pre[3])
+                st.session_state["_mesa_last_e"] = modelo
+                st.divider()
+                c1, c2, c3 = st.columns(3)
+                L = c1.number_input("Comprimento (mm)", 400.0, 4000.0, step=10.0, key="eL")
+                Dp = c2.number_input("Profundidade (mm)", 250.0, 1500.0, step=10.0, key="eDp")
+                H = c3.number_input("Altura da estrutura (mm)", 200.0, 1200.0, step=10.0, key="eH",
+                                    help="O tampo apoia por cima; altura final = estrutura + tampo.")
+                c4, c5, c6 = st.columns(3)
+                perfil = c4.selectbox("Perfil do tubo (mm)", [20, 25, 30, 40, 50], key="ePerfil")
+                wall = c5.number_input("Espessura do tubo (mm)", 0.8, 3.0, step=0.1, key="eWall", help="Parede do metalon — entra no cálculo de massa e no sólido 3D.")
+                trav = c6.checkbox("Travessa central", value=True, key="eTrav",
+                                   help="Barra longitudinal no meio da moldura, como na referência.")
+                raio = st.number_input("Raio do canto (mm)", 0.0, 15.0, 0.0, 0.5, key="eRaio",
+                                       help="0 = canto vivo. Entra na massa e fica registrado no nome/desenho.")
+                if st.button("GERAR ESTRUTURA", type="primary", use_container_width=True, key="eGen"):
+                    try:
+                        r = mc.mesa_estrutura_quadro(L, Dp, H, perfil=float(perfil), wall=wall, raio=raio,
+                                                     travessa_central=trav)
+                        mostra_resultado(r)
+                        st.caption("Moldura em meia esquadria 45°; montantes e travessas "
+                                   "inferiores em corte reto 90°.")
+                        st.info("O .zip inclui a estrutura (IGES/STEP) + desenho com vistas "
+                                "frontal, lateral, planta e lista de corte. Tampo apoiado, à parte.")
+                    except Exception as e:
+                        st.error("Erro ao gerar: " + str(e))
+
+        elif base.startswith("Pé trapézio"):
+            PRESETS_T = {
+                "Mesa de jantar — 1600×800×750": (1600.0, 800.0, 750.0, 40),
+                "Escrivaninha — 1200×700×750": (1200.0, 700.0, 750.0, 30),
+                "Bancada alta — 1400×600×1050": (1400.0, 600.0, 1050.0, 40),
+                "Personalizado": None,
+            }
+            for _k, _v in {"tW": 1600.0, "tDp": 800.0, "tH": 750.0, "tPerfil": 40,
+                           "tWall": 1.5, "tTop": 25.0, "tBase": 0.0}.items():
+                st.session_state.setdefault(_k, _v)
+            with st.container(border=True):
+                modelo = st.selectbox("Modelo de mesa", list(PRESETS_T.keys()), key="mesa_modelo_t")
+                pre = PRESETS_T[modelo]
+                if pre and st.session_state.get("_mesa_last_t") != modelo:
+                    (st.session_state["tW"], st.session_state["tDp"],
+                     st.session_state["tH"], st.session_state["tPerfil"]) = (
+                        float(pre[0]), float(pre[1]), float(pre[2]), pre[3])
+                st.session_state["_mesa_last_t"] = modelo
+                st.divider()
+                c1, c2, c3 = st.columns(3)
+                W = c1.number_input("Largura (mm)", 400.0, 4000.0, step=10.0, key="tW")
+                Dp = c2.number_input("Profundidade (mm)", 250.0, 1200.0, step=10.0, key="tDp")
+                H = c3.number_input("Altura (mm)", 350.0, 1200.0, step=10.0, key="tH")
+                c4, c5, c6 = st.columns(3)
+                perfil = c4.selectbox("Perfil do tubo (mm)", [20, 25, 30, 40, 50], key="tPerfil")
+                wall = c5.number_input("Espessura do tubo (mm)", 0.8, 3.0, step=0.1, key="tWall", help="Parede do metalon — entra no cálculo de massa e no sólido 3D.")
+                top_th = c6.number_input("Espessura do tampo (mm)", 6.0, 60.0, step=1.0, key="tTop")
+                c7, c8 = st.columns(2)
+                base_pe = c7.number_input("Base no chão (mm)", 0.0, 1100.0, step=10.0, key="tBase",
+                                          help="0 = automático (62% da profundidade).")
+                com_rail = c8.checkbox("Travessa superior", value=False, key="tRail")
+                raio = st.number_input("Raio do canto (mm)", 0.0, 15.0, 0.0, 0.5, key="tRaio",
+                                       help="0 = canto vivo. Entra na massa e fica registrado no nome/desenho.")
+                if st.button("GERAR MESA", type="primary", use_container_width=True, key="tGen"):
+                    try:
+                        r = mc.mesa_pe_trapezio(W, Dp, H, base=(base_pe or None), raio=raio,
+                                                perfil=float(perfil), wall=wall,
+                                                top_th=top_th, com_rail=com_rail)
+                        mostra_resultado(r)
+                        e = r.extra
+                        st.caption(f"Pé: topo {Dp:g} mm · base {e['Db']:g} mm · montante "
+                                   f"{e['diag']:.0f} mm (~{e['ang']:.0f}° com o piso).")
+                        st.info("O .zip inclui o conjunto (IGES/STEP) + desenho com a vista do "
+                                "pé, planta e lista de corte. Tampo à parte.")
+                    except Exception as e:
+                        st.error("Erro ao gerar: " + str(e))
+
+        elif base.startswith("Base em X"):
+            PRESETS_X = {
+                "Mesa de jantar redonda — Ø1100 (base 750×720)": (750.0, 720.0, 40, 1100.0),
+                "Mesa bistrô — Ø800 (base 560×720)": (560.0, 720.0, 30, 800.0),
+                "Mesa lateral — Ø500 (base 380×500)": (380.0, 500.0, 25, 500.0),
+                "Personalizado": None,
+            }
+            for _k, _v in {"xWf": 750.0, "xH": 720.0, "xPerfil": 40, "xWall": 1.5,
+                           "xTampo": 1100.0}.items():
+                st.session_state.setdefault(_k, _v)
+            with st.container(border=True):
+                modelo = st.selectbox("Modelo de base", list(PRESETS_X.keys()), key="mesa_modelo_x")
+                pre = PRESETS_X[modelo]
+                if pre and st.session_state.get("_mesa_last_x") != modelo:
+                    (st.session_state["xWf"], st.session_state["xH"],
+                     st.session_state["xPerfil"], st.session_state["xTampo"]) = (
+                        float(pre[0]), float(pre[1]), pre[2], float(pre[3]))
+                st.session_state["_mesa_last_x"] = modelo
+                st.divider()
+                c1, c2, c3 = st.columns(3)
+                Wf = c1.number_input("Envergadura da base (mm)", 250.0, 1500.0, step=10.0, key="xWf",
+                                     help="Largura de cada quadro = pegada da base no chão.")
+                H = c2.number_input("Altura da base (mm)", 300.0, 1200.0, step=10.0, key="xH",
+                                    help="O tampo assenta por cima; altura final = base + tampo.")
+                tampo = c3.number_input("Tampo Ø ou lado (mm)", 0.0, 2000.0, step=10.0, key="xTampo",
+                                        help="Somente informativo (entra na lista de corte).")
+                c4, c5 = st.columns(2)
+                perfil = c4.selectbox("Perfil do tubo (mm)", [25, 30, 40, 50], key="xPerfil")
+                wall = c5.number_input("Espessura do tubo (mm)", 0.8, 3.0, step=0.1, key="xWall", help="Parede do metalon — entra no cálculo de massa e no sólido 3D.")
+                raio = st.number_input("Raio do canto (mm)", 0.0, 15.0, 0.0, 0.5, key="xRaio",
+                                       help="0 = canto vivo. Entra na massa e fica registrado no nome/desenho.")
+                if st.button("GERAR BASE", type="primary", use_container_width=True, key="xGen"):
+                    try:
+                        r = mc.mesa_base_x(Wf, H, perfil=float(perfil), wall=wall, tampo_D=tampo, raio=raio)
+                        mostra_resultado(r)
+                        st.caption("Os dois quadros são idênticos: cruzam a 90° com encaixe "
+                                   "meia-madeira no centro das travessas superior e inferior.")
+                        st.info("O .zip inclui a base (IGES/STEP) + desenho com elevação do "
+                                "quadro, planta em X e lista de corte. Tampo à parte.")
+                    except Exception as e:
+                        st.error("Erro ao gerar: " + str(e))
+
+        else:  # Pé cubo
+            PRESETS_CB = {
+                "Mesa lateral — 400×400×450": (400.0, 450.0, 25),
+                "Mesa de centro — 600×600×400": (600.0, 400.0, 30),
+                "Banqueta — 350×350×450": (350.0, 450.0, 25),
+                "Personalizado": None,
+            }
+            for _k, _v in {"cbA": 400.0, "cbH": 450.0, "cbPerfil": 25, "cbWall": 1.5,
+                           "cbTop": 20.0}.items():
+                st.session_state.setdefault(_k, _v)
+            with st.container(border=True):
+                modelo = st.selectbox("Modelo de mesa", list(PRESETS_CB.keys()), key="mesa_modelo_cb")
+                pre = PRESETS_CB[modelo]
+                if pre and st.session_state.get("_mesa_last_cb") != modelo:
+                    (st.session_state["cbA"], st.session_state["cbH"],
+                     st.session_state["cbPerfil"]) = (float(pre[0]), float(pre[1]), pre[2])
+                st.session_state["_mesa_last_cb"] = modelo
+                st.divider()
+                c1, c2, c3 = st.columns(3)
+                A = c1.number_input("Lado do tampo (mm)", 250.0, 1200.0, step=10.0, key="cbA")
+                H = c2.number_input("Altura montada (mm)", 300.0, 1100.0, step=10.0, key="cbH")
+                top_th = c3.number_input("Espessura do tampo (mm)", 6.0, 60.0, step=1.0, key="cbTop")
+                c4, c5, c6 = st.columns(3)
+                perfil = c4.selectbox("Perfil do tubo (mm)", [20, 25, 30, 40], key="cbPerfil")
+                wall = c5.number_input("Espessura do tubo (mm)", 0.8, 3.0, step=0.1, key="cbWall", help="Parede do metalon — entra no cálculo de massa e no sólido 3D.")
+                moldura = c6.checkbox("Moldura superior", value=True, key="cbMold",
+                                      help="Quadro-borda contornando o tampo, como na referência.")
+                raio = st.number_input("Raio do canto (mm)", 0.0, 15.0, 0.0, 0.5, key="cbRaio",
+                                       help="0 = canto vivo. Entra na massa e fica registrado no nome/desenho.")
+                if st.button("GERAR MESA", type="primary", use_container_width=True, key="cbGen"):
+                    try:
+                        r = mc.mesa_cubo(A, H, perfil=float(perfil), wall=wall, raio=raio,
+                                         top_th=top_th, moldura=moldura)
+                        mostra_resultado(r)
+                        e = r.extra
+                        st.caption(f"Quadros diagonais: {e['diag']:.0f} × {e['Hf']:g} mm, "
+                                   f"meia-madeira no cruzamento central.")
+                        st.info("O .zip inclui o conjunto (IGES/STEP) + desenho com elevação do "
+                                "quadro diagonal, planta e lista de corte. Tampo à parte.")
+                    except Exception as e:
+                        st.error("Erro ao gerar: " + str(e))
+
+    # ------------------------------------------------- iTubeCAM
+    elif secao == "itubecam":
+        st.caption("Prepara peças para o **iTubeCAM / SinoCAM 3D** (nesting da laser de tubo): "
+                   "sólidos ocos com as esquadrias já cortadas. Conforme o manual, o software "
+                   "importa IGS, STEP, SAT, DXF/DWG e NC1, extrai as linhas de corte do próprio "
+                   "sólido e detecta a direção do eixo automaticamente.")
+        tab1, tab2, tab3 = st.tabs(["Peça individual", "Lote de peças (.zip de IGS)",
+                                    "Seção personalizada (DXF)"])
+
+        with tab1:
+            with st.container(border=True):
+                c1, c2, c3 = st.columns(3)
+                tw = c1.number_input("Tubo — largura (mm)", 10.0, 300.0, 40.0, 1.0, key="itW")
+                th = c2.number_input("Tubo — altura (mm)", 10.0, 300.0, 40.0, 1.0, key="itH")
+                esp = c3.number_input("Espessura do tubo (mm)", 0.5, 8.0, 1.5, 0.1, key="itEsp")
+                c4, c5, c6 = st.columns(3)
+                L = c4.number_input("Comprimento (mm) — aresta externa", 30.0, 12000.0,
+                                    800.0, 5.0, key="itL")
+                ce = c5.number_input("Corte esquerdo (graus)", 0.0, 75.0, 45.0, 1.0, key="itCe",
+                                     help="0 = corte reto 90°; 45 = meia esquadria.")
+                cd = c6.number_input("Corte direito (graus)", 0.0, 75.0, 45.0, 1.0, key="itCd")
+                plano = st.radio("Esquadria atravessa a...", ["largura", "altura"],
+                                 horizontal=True, key="itPlano",
+                                 help="Largura = esquadria vista em planta; altura = vista de frente.")
+                nome = st.text_input("Nome da peça (opcional)", key="itNome",
+                                     placeholder="ex.: Montante quadro escrivaninha")
+            if st.button("GERAR PEÇA", type="primary", use_container_width=True, key="itGen"):
+                try:
+                    r = itubecam.tubo_peca(tw, th, esp, L, corte_esq=ce, corte_dir=cd,
+                                           plano=plano, nome=nome or None)
+                    mostra_resultado(r)
+                    e = r.extra
+                    st.caption(f"Aresta curta {e['L_curta']:g} mm · massa {r.mass:.3f} kg. "
+                               "Use o botão 'Apenas IGS' para baixar só o arquivo que o "
+                               "iTubeCAM importa.")
+                except Exception as e:
+                    st.error("Erro ao gerar: " + str(e))
+
+        with tab2:
+            st.caption("Uma linha por peça — selecione todos os IGS de uma vez na importação "
+                       "(CTRL+clique). A quantidade é informada DENTRO do software, nas "
+                       "propriedades da peça; o nome do arquivo e a lista.csv servem de conferência.")
+            import pandas as _pd
+            _df0 = _pd.DataFrame([
+                {"Nome": "Montante", "Largura": 40.0, "Altura": 40.0, "Esp": 1.5,
+                 "Comp": 700.0, "Corte esq °": 45.0, "Corte dir °": 45.0,
+                 "Plano": "largura", "Qtd": 4},
+                {"Nome": "Travessa", "Largura": 40.0, "Altura": 40.0, "Esp": 1.5,
+                 "Comp": 520.0, "Corte esq °": 45.0, "Corte dir °": 45.0,
+                 "Plano": "largura", "Qtd": 4},
+            ])
+            df = st.data_editor(
+                _df0, num_rows="dynamic", use_container_width=True, key="itLote",
+                column_config={
+                    "Plano": st.column_config.SelectboxColumn(options=["largura", "altura"]),
+                    "Qtd": st.column_config.NumberColumn(min_value=1, step=1),
+                })
+            inc_step = st.checkbox("Incluir também STEP de cada peça", value=False, key="itLoteStep")
+            if st.button("GERAR LOTE", type="primary", use_container_width=True, key="itLoteGen"):
+                try:
+                    pecas = [dict(nome=str(row["Nome"]), w=float(row["Largura"]),
+                                  h=float(row["Altura"]), esp=float(row["Esp"]),
+                                  L=float(row["Comp"]), ce=float(row["Corte esq °"]),
+                                  cd=float(row["Corte dir °"]), plano=str(row["Plano"]),
+                                  qtd=int(row["Qtd"]))
+                             for _, row in df.iterrows() if str(row.get("Nome", "")).strip()]
+                    if not pecas:
+                        st.warning("Nenhuma peça válida na tabela.")
+                    else:
+                        data_zip, avisos = itubecam.lote_igs(pecas, incluir_step=inc_step)
+                        for a in avisos:
+                            st.warning(a)
+                        st.success(f"Lote gerado: {len(pecas) - len(avisos)} peça(s).")
+                        st.download_button("⬇  Baixar lote iTubeCAM (.zip)", data=data_zip,
+                                           file_name="lote_iTubeCAM.zip", mime="application/zip",
+                                           use_container_width=True)
+                except Exception as e:
+                    st.error("Erro ao gerar lote: " + str(e))
+
+        with tab3:
+            st.caption("Contorno fechado (externo + interno) da seção — o manual confirma: "
+                       "'custom pipe' aceita apenas seção fechada, em DWG ou DXF.")
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns(4)
+                sw = c1.number_input("Largura (mm)", 10.0, 300.0, 40.0, 1.0, key="itSw")
+                sh = c2.number_input("Altura (mm)", 10.0, 300.0, 40.0, 1.0, key="itSh")
+                se = c3.number_input("Espessura (mm)", 0.5, 8.0, 1.5, 0.1, key="itSe")
+                sr = c4.number_input("Raio do canto (mm)", 0.0, 20.0, 0.0, 0.5, key="itSr")
+            try:
+                dxf = itubecam.secao_dxf(sw, sh, se, raio=sr)
+                st.download_button("⬇  Baixar seção (.dxf)", data=dxf,
+                                   file_name=f"secao_{sw:g}x{sh:g}x{se:g}.dxf",
+                                   mime="application/dxf", use_container_width=True)
+            except Exception as e:
+                st.error(str(e))
+
+
+    # ------------------------------------------------- Puxadores
+    elif secao == "puxador":
+        st.caption("Puxador tradicional em tubo inox: seção redonda, quadrada ou "
+                   "retangular (com raio de canto), dois furos de fixação sempre "
+                   "centrados no tubo.")
+        with st.container(border=True):
+            sec_px = st.radio("Seção do tubo", ["Redondo", "Quadrado", "Retangular"],
+                              horizontal=True, key="pxSec")
+            c1, c2, c3 = st.columns(3)
+            if sec_px == "Redondo":
+                med = c1.number_input("Ø do tubo (mm)", 9.0, 76.0, 25.4, 0.1, key="pxMed",
+                                      help="Ex.: Ø25,4 (1\"), Ø31,75 (1.1/4\").")
+                medH = med
+                c2.empty(); c3.empty()
+            elif sec_px == "Quadrado":
+                med = c1.number_input("Lado do tubo (mm)", 10.0, 60.0, 20.0, 1.0, key="pxMedQ")
+                medH = med
+                rc = c2.number_input("Raio do canto (mm)", 0.0, 8.0, 0.0, 0.5, key="pxRaioQ",
+                                     help="0 = canto vivo. Entra na massa e no sólido 3D.")
+            else:
+                med = c1.number_input("Largura (mm)", 15.0, 80.0, 40.0, 1.0, key="pxMedW",
+                                      help="Face voltada à porta (onde vão os furos).")
+                medH = c2.number_input("Profundidade (mm)", 8.0, 50.0, 20.0, 1.0, key="pxMedH")
+                rc = c3.number_input("Raio do canto (mm)", 0.0, 8.0, 0.0, 0.5, key="pxRaioR",
+                                     help="0 = canto vivo. Entra na massa e no sólido 3D.")
+            if sec_px == "Redondo":
+                rc = 0.0
+            c4, c5, c6 = st.columns(3)
+            esp = c4.number_input("Espessura do tubo (mm)", 0.6, 3.0, 1.2, 0.1, key="pxEsp")
+            L = c5.number_input("Comprimento do tubo (mm)", 60.0, 2500.0, 300.0, 5.0, key="pxL")
+            EF = c6.number_input("Entre furos (mm)", 20.0, 2400.0, 192.0, 1.0, key="pxEF",
+                                 help="Distância entre os eixos dos 2 furos, sempre "
+                                      "CENTRADA no tubo. Padrões: 96, 128, 160, 192, "
+                                      "224, 288, 320…")
+            dF = st.number_input("Ø dos furos (mm)", 2.0, 12.0, 5.0, 0.5, key="pxD")
+        if st.button("GERAR PUXADOR", type="primary", use_container_width=True, key="pxGen"):
+            try:
+                r = puxador.puxador_tradicional(sec_px.lower(), med, esp, L, EF,
+                                                d_furo=dF, medida_h=medH, raio=rc)
+                mostra_resultado(r)
+                st.caption(f"Furos a {r.extra['borda']:g} mm de cada ponta "
+                           f"(entre furos {EF:g} mm centrado).")
+            except Exception as e:
+                st.error("Erro ao gerar: " + str(e))
+
+
+    # ------------------------------------------------- Configurações
+    elif secao == "config":
+        st.caption("Identidade dos PDFs (logo e empresa) e aparência do sistema — "
+                   "tudo fica salvo e vale para todas as seções.")
+
+        with st.container(border=True):
+            st.markdown("**🏷️ Identidade nos PDFs (carimbo, folhas e etiquetas)**")
+            from metallo_cad import config as mcfg
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                try:
+                    st.image(mcfg.logo_path(), caption="Logo em uso", width=180)
+                except Exception:
+                    st.info("Sem logo carregado.")
+            with c2:
+                up = st.file_uploader("Trocar logo (PNG/JPG — fundo escuro fica melhor no carimbo)",
+                                      type=["png", "jpg", "jpeg"], key="cfgLogo")
+                emp = st.text_input("Nome da empresa", value=mcfg.empresa(), key="cfgEmp")
+                lin = st.text_input("Linha / subtítulo (endereço, slogan…)",
+                                    value=mcfg.linha(), key="cfgLin")
+            b1, b2 = st.columns(2)
+            if b1.button("💾 Salvar identidade", type="primary",
+                         use_container_width=True, key="cfgSave"):
+                try:
+                    d = mcfg._data_dir()
+                    if up is not None:
+                        from PIL import Image
+                        import io as _io
+                        img = Image.open(_io.BytesIO(up.getvalue())).convert("RGB")
+                        for _ext in ("png", "jpg", "jpeg"):
+                            _p = os.path.join(d, f"logo_custom.{_ext}")
+                            if os.path.exists(_p):
+                                os.remove(_p)
+                        img.save(os.path.join(d, "logo_custom.png"))
+                    open(os.path.join(d, "empresa.txt"), "w", encoding="utf-8").write(emp.strip())
+                    open(os.path.join(d, "linha.txt"), "w", encoding="utf-8").write(lin.strip())
+                    st.success("Identidade salva — os próximos PDFs já saem com ela.")
+                    st.rerun()
+                except Exception as e:
+                    st.error("Erro ao salvar: " + str(e))
+            if b2.button("↩️ Restaurar padrão METALLO", use_container_width=True, key="cfgReset"):
+                try:
+                    d = mcfg._data_dir()
+                    for f in ("logo_custom.png", "logo_custom.jpg", "logo_custom.jpeg",
+                              "empresa.txt", "linha.txt"):
+                        p = os.path.join(d, f)
+                        if os.path.exists(p):
+                            os.remove(p)
+                    st.success("Padrão METALLO restaurado.")
+                    st.rerun()
+                except Exception as e:
+                    st.error("Erro: " + str(e))
+
+        with st.container(border=True):
+            st.markdown("**🖥️ Aparência do sistema** (além do tema de cores no topo)")
+            ap = dict(st.session_state["ui_aparencia"])
+            c1, c2, c3 = st.columns(3)
+            ap["modo"] = c1.selectbox("Modo", ["Escuro", "Claro"],
+                                      index=["Escuro", "Claro"].index(ap.get("modo", "Escuro")),
+                                      key="cfgModo")
+            ap["largura"] = c2.selectbox("Largura do conteúdo", ["Normal", "Larga", "Total"],
+                                         index=["Normal", "Larga", "Total"].index(ap.get("largura", "Normal")),
+                                         key="cfgLarg")
+            ap["densidade"] = c3.selectbox("Densidade", ["Confortável", "Compacto"],
+                                           index=["Confortável", "Compacto"].index(ap.get("densidade", "Confortável")),
+                                           key="cfgDens")
+            c4, c5 = st.columns(2)
+            ap["grade"] = c4.checkbox("Grade de fundo", value=bool(ap.get("grade", True)), key="cfgGrade")
+            ap["animacoes"] = c5.checkbox("Animações", value=bool(ap.get("animacoes", True)), key="cfgAnim")
+            if ap != st.session_state["ui_aparencia"]:
+                st.session_state["ui_aparencia"] = ap
+                _aparencia_salva(ap)
+                st.rerun()
+            st.caption("As opções valem na hora e ficam salvas para as próximas sessões.")
 
     # ------------------------------------------------- Tempo de corte (laser)
     elif secao == "corte":
@@ -2099,17 +2995,20 @@ else:
                 _tot = sum(int(m.get("qtd", 1)) for m, _ in _validos)
                 st.caption(f"{len(_validos)} tamanho(s) · {_tot} conjunto(s) no total (com as quantidades).")
                 if _validos:
-                    _itens = []
-                    _ytopo = 0.0
-                    for _m, _r in _validos:
-                        for _c in range(int(_m.get("qtd", 1))):
-                            _hs = _r["sup"]["bbox"][1]; _hi = _r["inf"]["bbox"][1]
-                            _itens.append((_r["sup"], 0.0, _ytopo - _hs / 2.0)); _ytopo -= _hs + 40.0
-                            _itens.append((_r["inf"], 0.0, _ytopo - _hi / 2.0)); _ytopo -= _hi + 60.0
-                    _dxf_lote = ralo_lib.dxf_bytes(_itens)
-                    st.download_button("\u2b07 DXF em LOTE (todas as peças, 1 arquivo)", data=_dxf_lote,
-                                       file_name="ralos_lote.dxf", mime="image/vnd.dxf",
-                                       use_container_width=True, key="rl_lote")
+                    def _empilha(chave, gap):
+                        _it = []; _y = 0.0
+                        for _m, _r in _validos:
+                            for _c in range(int(_m.get("qtd", 1))):
+                                _h = _r[chave]["bbox"][1]
+                                _it.append((_r[chave], 0.0, _y - _h / 2.0)); _y -= _h + gap
+                        return ralo_lib.dxf_bytes(_it)
+                    _lt1, _lt2 = st.columns(2)
+                    _lt1.download_button("\u2b07 LOTE — SUPERIORES (grelhas, 1 dxf)", data=_empilha("sup", 40.0),
+                                         file_name="ralos_lote_SUPERIORES.dxf", mime="image/vnd.dxf",
+                                         use_container_width=True, key="rl_lote_sup")
+                    _lt2.download_button("\u2b07 LOTE — INFERIORES (apoios, 1 dxf)", data=_empilha("inf", 40.0),
+                                         file_name="ralos_lote_INFERIORES.dxf", mime="image/vnd.dxf",
+                                         use_container_width=True, key="rl_lote_inf")
                 st.markdown("---")
                 for _m, _r in _pecas_r:
                     with st.container(border=True):
@@ -2809,6 +3708,11 @@ else:
 
     # ------------------------------------------------- Ajuda
     elif secao == "ajuda":
+        _man = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MANUAL_METALLO_IA.pdf")
+        if os.path.exists(_man):
+            st.download_button("📘  Baixar o MANUAL DO USUÁRIO (PDF)", data=open(_man, "rb").read(),
+                               file_name="MANUAL_METALLO_IA.pdf", mime="application/pdf",
+                               use_container_width=True, key="dl_manual")
         with st.container(border=True):
             st.markdown(
                 "**Como usar**\n\n"
